@@ -12,7 +12,8 @@
 
 (defpackage swank
   (:use cl swank/backend swank/match swank/rpc)
-  (:export #:startup-multiprocessing
+  (:export #:*eval-func*
+           #:startup-multiprocessing
            #:start-server
            #:create-server
            #:stop-server
@@ -69,6 +70,8 @@
            #:*after-toggle-trace-hook*))
 
 (in-package :swank)
+
+(defvar *eval-func* #'eval)
 
 
 ;;;; Top-level variables, constants, macros
@@ -1312,7 +1315,7 @@ event was found."
     (let ((form (handler-case (read)
                   (end-of-repl-input () (return)))))
       (let ((- form)
-            (values (multiple-value-list (eval form))))
+            (values (multiple-value-list (funcall *eval-func* form))))
         (setq *** **  ** *  * (car values)
               /// //  // /  / values
               +++ ++  ++ +  + form)
@@ -1740,7 +1743,7 @@ Errors are trapped and invoke our debugger."
            ;; APPLY would be cleaner than EVAL. 
            ;; (setq result (apply (car form) (cdr form)))
            (handler-bind ((t (lambda (c) (setf condition c))))
-             (setq result (with-slime-interrupts (eval form))))
+             (setq result (with-slime-interrupts (funcall *eval-func* form))))
            (run-hook *pre-reply-hook*)
            (setq ok t))
       (send-to-emacs `(:return ,(current-thread)
@@ -1776,7 +1779,7 @@ Errors are trapped and invoke our debugger."
 (defslimefun interactive-eval (string)
   (with-buffer-syntax ()
     (with-retry-restart (:msg "Retry SLIME interactive evaluation request.")
-      (let ((values (multiple-value-list (eval (from-string string)))))
+      (let ((values (multiple-value-list (funcall *eval-func* (from-string string)))))
         (finish-output)
         (format-values-for-echo-area values)))))
 
@@ -1785,7 +1788,7 @@ Errors are trapped and invoke our debugger."
     (with-retry-restart (:msg "Retry SLIME evaluation request.")
       (let* ((s (make-string-output-stream))
              (*standard-output* s)
-             (values (multiple-value-list (eval (from-string string)))))
+             (values (multiple-value-list (funcall *eval-func* (from-string string)))))
         (list (get-output-stream-string s) 
               (format nil "~{~S~^~%~}" values))))))
 
@@ -1801,7 +1804,7 @@ last form."
            (finish-output)
            (return (values values -)))
          (setq - form)
-         (setq values (multiple-value-list (eval form)))
+         (setq values (multiple-value-list (funcall *eval-func* form)))
          (finish-output))))))
 
 (defslimefun interactive-eval-region (string)
@@ -1817,7 +1820,7 @@ last form."
           (declare (ignore value doc))
           (assert (eq dv 'defvar))
           (makunbound name)
-          (prin1-to-string (eval form)))))))
+          (prin1-to-string (funcall *eval-func* form)))))))
 
 (defvar *swank-pprint-bindings*
   `((*print-pretty*   . t) 
@@ -1845,7 +1848,7 @@ Used by pprint-eval.")
            (values 
             (let ((*standard-output* s)
                   (*trace-output* s))
-              (multiple-value-list (eval (read-from-string string))))))
+              (multiple-value-list (funcall *eval-func* (read-from-string string))))))
       (cat (get-output-stream-string s)
            (swank-pprint values)))))
 
@@ -2034,7 +2037,7 @@ inspector has been closed in Emacs."
 FORM is expected, but not required, to be SETF'able."
   ;; FIXME: Can we check FORM for setfability? -luke (12/Mar/2005)
   (with-buffer-syntax ()
-    (let* ((value (eval (read-from-string form)))
+    (let* ((value (funcall *eval-func* (read-from-string form)))
            (*print-length* nil))
       (prin1-to-string value))))
 
@@ -2042,7 +2045,7 @@ FORM is expected, but not required, to be SETF'able."
   "Set the value of a setf'able FORM to VALUE.
 FORM and VALUE are both strings from Emacs."
   (with-buffer-syntax ()
-    (eval `(setf ,(read-from-string form) 
+    (funcall *eval-func* `(setf ,(read-from-string form) 
             ,(read-from-string (concatenate 'string "`" value))))
     t))
 
@@ -2667,7 +2670,7 @@ the filename of the module (or nil if the file doesn't exist).")
   (with-buffer-syntax ()
     (with-output-to-string (*standard-output*)
       (let ((*print-readably* nil))
-        (disassemble (eval (read-from-string form)))))))
+        (disassemble (funcall *eval-func* (read-from-string form)))))))
 
 
 ;;;; Simple completion
@@ -2879,7 +2882,7 @@ Include the nicknames if NICKNAMES is true."
 
 ;; Use eval for the sake of portability... 
 (defun tracedp (fspec)
-  (member fspec (eval '(trace))))
+  (member fspec (funcall *eval-func* '(trace))))
 
 (defvar *after-toggle-trace-hook* nil
   "Hook called whenever a SPEC is traced or untraced.
@@ -2890,10 +2893,10 @@ If non-nil, called with two arguments SPEC and TRACED-P." )
          (retval (cond ((consp spec) ; handle complicated cases in the backend
            (toggle-trace spec))
           ((tracedp spec)
-	   (eval `(untrace ,spec))
+	   (funcall *eval-func* `(untrace ,spec))
 	   (format nil "~S is now untraced." spec))
 	  (t
-           (eval `(trace ,spec))
+           (funcall *eval-func* `(trace ,spec))
                         (format nil "~S is now traced." spec))))
          (traced-p (let* ((tosearch "is now traced.")
                           (start (- (length retval)
@@ -2988,7 +2991,7 @@ If non-nil, called with two arguments SPEC and TRACED-P." )
   (dcase spec
     ((:string string package)
      (with-buffer-syntax (package)
-       (eval (read-from-string string))))
+       (funcall *eval-func* (read-from-string string))))
     ((:inspector part) 
      (inspector-nth-part part))
     ((:sldb frame var)
@@ -3146,7 +3149,7 @@ DSPEC is a string and LOCATION a source location. NAME is a string."
   (with-buffer-syntax ()
     (with-retry-restart (:msg "Retry SLIME inspection request.")
       (reset-inspector)
-      (inspect-object (eval (read-from-string string))))))
+      (inspect-object (funcall *eval-func* (read-from-string string))))))
 
 (defun ensure-istate-metadata (o indicator default)
   (with-struct (istate. object metadata-plist) *istate*
@@ -3298,7 +3301,7 @@ Return nil if there's no previous object."
          (form (with-buffer-syntax ((cdr (assoc '*package* context)))
                  (read-from-string string)))
          (ignorable (remove-if #'boundp (mapcar #'car context))))
-    (to-string (eval `(let ((* ',obj) (- ',form)
+    (to-string (funcall *eval-func* `(let ((* ',obj) (- ',form)
                             . ,(loop for (var . val) in context 
                                      unless (constantp var) collect 
                                      `(,var ',val)))
